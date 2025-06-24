@@ -7,9 +7,10 @@ library(lubridate)
 library(stringr)
 library(digest)
 library(tibble)
+library(rio);
 
 
-# options ----
+# init ----
 targetdir = '/tmp';
 now <- Sys.time();
 
@@ -36,7 +37,7 @@ file_data <- dir_info(targetdir, recurse = T, all=T,
 # ahead of their origins
 repo_info <- subset(file_data,path_file=='.git')$path_dir %>% unique %>%
   data.frame(git_repo=.
-             ,dirty=sapply(git_repos,function(xx){
+             ,dirty=sapply(.,function(xx){
                length(system(paste("cd",shQuote(xx),"&& git status --porcelain")
                              , intern=T))
                }));
