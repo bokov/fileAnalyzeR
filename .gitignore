@@ -4,3 +4,4 @@
 .Ruserdata
 *.csv
 *.log
+local_config.R
