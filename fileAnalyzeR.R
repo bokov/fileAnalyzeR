@@ -53,14 +53,14 @@ repo_info <- subset(repo_info,dirty==0) %>%
 file_data <- mutate(file_data, is_gitrepo = grepl(paste(repo_info$git_repo,collapse='|'),path_dir))
 
 # Now, to get statistics about top-level folders
-folderscmd <- "{   for dir in .[!.]* */; do     [ -d \"$dir\" ] || continue;     name=$(basename \"$dir\");     files=$(find \"$dir\" -type f 2>/dev/null | wc -l 2>/dev/null);     size=$(du -s \"$dir\" 2>/dev/null | awk '{print $1}');     echo \"$name\t$files\t$size\";   done; }  > foo_dirstats.csv 2>foo_errors.log"
+folderscmd <- "{   for dir in .[!.]* */; do     [ -d \"$dir\" ] || continue; name=$(basename \"$dir\"); files=$(find \"$dir\" -type f 2>/dev/null | wc -l 2>/dev/null); size=$(du -s \"$dir\" 2>/dev/null | awk '{print $1}'); echo \"$name\t$files\t$size\";   done; }  > folders_dirstats.csv 2>folders_errors.log"
 system(paste('cd',shQuote(targetdir),'&&',folderscmd),wait = T);
-dirstats <- import(file.path(targetdir,'foo_dirstats.csv'),col.names=c('path_dir','files','size'));
+dirstats <- import(file.path(targetdir,'folders_dirstats.csv'),col.names=c('path_dir','files','size'));
 subset(dirstats
        ,!path_dir %in% path_file(repo_info$git_repo) &
          files > 0 &
          size > 1024 &
-         !grepl('^Rtmp|\\.tmp$|^[.]|^java_prop_extract',path_dir)) %>%
+         !grepl('^Rtmp|^pid-|\\.tmp$|^[.]|^java_prop_extract',path_dir)) %>%
   arrange(desc(size)) %>% View;
 
 # Which extensions matter the most?
