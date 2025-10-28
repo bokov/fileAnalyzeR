@@ -26,7 +26,9 @@ for(ii in opentabs$windows){
     nthinhistory <- length(jj$entries);
     kk <- jj$entries[[nthinhistory]];
     kkrow <- 1 + kkrow;
-    opentabslist[[kkrow]] <- tibble(url=kk$url,title=kk$title,nthinhistory,lastAccessed=jj$lastAccessed,tab=jjtab,window=iiwindow);
+    opentabslist[[kkrow]] <- tibble(url=kk$url,title=kk$title,nthinhistory
+                                    ,lastAccessed=as.POSIXct(jj$lastAccessed/1000)
+                                    ,tab=jjtab,window=iiwindow);
   }
 };
 
@@ -36,6 +38,14 @@ opentabstable <- bind_rows(opentabslist) %>%
 
 # analyze data ----
 
-by_domain <- summarise(opentabstable,tabs=n(),.by=domain) %>% arrange(desc(tabs));
-by_parent_domain <- summarise(opentabstable,tabs=n(),.by=parent_domain) %>% arrange(desc(tabs));
+by_domain <- summarise(opentabstable,tabs=n()
+                       ,minLastAccessed=min(lastAccessed,na.rm = T)
+                       ,medLastAccessed=median(lastAccessed,na.rm = T)
+                       ,maxLastAccessed=max(lastAccessed,na.rm = T)
+                       ,.by=domain) %>% arrange(desc(tabs));
+by_parent_domain <- summarise(opentabstable,tabs=n()
+                              ,minLastAccessed=min(lastAccessed,na.rm = T)
+                              ,medLastAccessed=median(lastAccessed,na.rm = T)
+                              ,maxLastAccessed=max(lastAccessed,na.rm = T)
+                              ,.by=parent_domain) %>% arrange(desc(tabs));
 
