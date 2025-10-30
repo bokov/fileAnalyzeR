@@ -9,6 +9,7 @@ library(digest)
 library(tibble)
 library(rio);
 library(fuzzyjoin);
+library(progress);
 
 # init ----
 targetdir = '/tmp';
@@ -31,7 +32,8 @@ file_data <- dir_info(targetdir, recurse = T, all=T,
   mutate(path_dir=paste0(path_dir(path),'/'),path_file=path_file(path)
          ,path_ext = ifelse(type=='directory','',path_ext(path))
          ,depth = str_count(path,'/')
-         ,across(ends_with("_time"),~{out<- now - coalesce(.x,now)}))
+         #,across(ends_with("_time"),~{out<- now - coalesce(.x,now)})
+         )
 
 # identify git repos, whether or not they are dirty, and whether or not they are
 # ahead of their origins
@@ -40,14 +42,11 @@ repo_info <- subset(file_data,path_file=='.git')$path_dir %>% unique %>%
              ,dirty=sapply(.,function(xx){
                length(system(paste("cd",shQuote(xx),"&& git status --porcelain")
                              , intern=T))
-               }));
-
-repo_info <- subset(repo_info,dirty==0) %>%
-  transmute(git_repo
-            ,ahead=sapply(git_repo,function(xx){
-  c(system(
-    paste("cd",shQuote(xx),"&& git rev-list --count --right-only --count origin/HEAD...HEAD")
-    ,intern=T),'error')[1]}) %>% as.numeric()) %>% left_join(repo_info,.);
+               })
+             ,ahead=sapply(.,function(xx){
+               c(system(
+                 paste("cd",shQuote(xx),"&& git rev-list --count --right-only --count origin/HEAD...HEAD")
+                 ,intern=T),Inf)[1]}) %>% as.numeric());
 
 # update file_data so that every file that's in a git repo or in a subdirectory
 # of a git repo can be marked as such
@@ -62,13 +61,25 @@ file_data <- mutate(repo_info,git_repo = paste0("^", git_repo)) %>%
 # system(paste('cd',shQuote(targetdir),'&&',folderscmd),wait = T);
 # dirstats <- import(file.path(targetdir,'folders_dirstats.csv'),col.names=c('path_dir','files','size'));
 
+pb <- progress_bar$new(total=sum(file_data$type=='directory',na.rm=T),format='[:bar] :percent, :current of :total, :elapsedfull elapsed, ETA: :eta, :tick_rate/s')
+dir_fallbackresult <- data.frame(filecount=NA,totalsize=NA
+                                 ,lastmod=NA,lastaccess=NA,lastchange=NA
+                                 ,lastcreate=NA);
+
 dir_data <- dir_map(targetdir,recurse = T,all=T,type='directory',fail=F
                ,fun=function(xx){
-                 nn<-try(length(dir_ls(xx)));
-                 nn <- if(is(nn,'try-error')) NA else nn;
-                 sz <- try(sum(dir_info(xx,fail=F,recurse=T,all=T,type='any')$size,na.rm=T));
-                 sz <- if(is(sz,'try-error')) NA else sz;
-                 data.frame(path=xx,filecount=nn,totalsize=sz)}) %>% bind_rows();
+                 dinf <- try(dir_info(xx,fail=F,recurse=T,all=T,type=c('file')));
+                 pb$tick();
+                 if(is(dinf,'try-error')) return(cbind(path=xx,dir_fallbackresult)) else {
+                   return(with(dinf
+                               ,data.frame(path=xx,filecount=length(type)
+                                           ,totalsize=sum(size,na.rm=T)
+                                           ,lastmod=max(modification_time,na.rm=T)
+                                           ,lastaccess=max(access_time,na.rm=T)
+                                           ,lastchange=max(change_time,na.rm=T)
+                                           ,lastcreate=max(birth_time,na.rm=T))))
+                   }
+                 }) %>% bind_rows();
 
 
 ## Waaay too slow
@@ -78,27 +89,41 @@ dir_data <- dir_map(targetdir,recurse = T,all=T,type='directory',fail=F
 #                        data.frame(path=xx,type=type)}) %>% bind_rows();
 
 file_data <- left_join(file_data,dir_data) %>%
-  mutate(filecount=ifelse(type!='directory',coalesce(filecount,1),filecount)
-         ,totalsize=fs_bytes(1024*ifelse(type!='directory',coalesce(totalsize,size),totalsize)));
+  mutate(filecount=ifelse(type!='directory',1,filecount)
+         ,totalsize=ifelse(type!='directory',size,totalsize)
+         ,lastmod=ifelse(type!='directory',modification_time,lastmod)
+         ,lastaccess=ifelse(type!='directory',access_time,lastaccess)
+         ,lastchange=ifelse(type!='directory',change_time,lastchange)
+         ,lastcreate=ifelse(type!='directory',birth_time,lastcreate)
+  );
+class(file_data$totalsize)<-c('fs_bytes','numeric');
+class(file_data$lastmod) <-class(file_data$lastaccess) <-
+  class(file_data$lastchange) <- class(file_data$lastcreate) <-
+  c('POSIXct','POSIXt');
 
-# file_sizes<-system(paste('du -ax ',shQuote(targetdir),' 2>/dev/null'),intern = T,wait = T) %>%
-#   sapply(str_split_fixed,'\t',2) %>% t %>% as.data.frame %>% setNames(c('size','path')) %>%
-#   mutate(size=as_fs_bytes(paste0(size,'K')))
-# file_counts <- system(paste('find'
-#                             ,shQuote(targetdir)
-#                             ,r'(find /tmp -type d -exec sh -c 'echo "$(find "$1" -type f | wc -l)\t$1"' _ {} \; 2> /dev/null)')
-#                       ,intern=T,wait=T) %>%
-#   sapply(str_split_fixed,'\t',2) %>% t %>% as.data.frame %>% setNames(c('count','path')) %>%
-#   mutate(count=as.numeric(count));
-
-# subset(dirstats
-#        ,!path_dir %in% path_file(repo_info$git_repo) &
-#          files > 0 &
-#          size > 1024 &
-#          !grepl('^Rtmp|^pid-|\\.tmp$|^[.]|^java_prop_extract',path_dir)) %>%
-#   arrange(desc(size)) %>% View;
-subset(file_data,(dirty!=0|coalesce(ahead,-1)!=0|!git_repo) & depth==2 & user == 'a' & type %in% c('directory','file') & !grepl('^Rtmp|^pid-|^[.]|^java_prop_extract|^[.]org[.]chromium|^[.]com[.]valvesoftware|^cura-crash|^Outlook Logging|^forge_installer|^kallichore-|^kernel-|^skype-|^steam[A-Za-z]{6}|[.]tmp$',gsub(paste0(targetdir,'/*'),'',path)) & !path_ext %in% c('lock','tmp','pbix')) %>% View()
+exclusion <- . %>%
+  subset( (dirty!=0|coalesce(ahead,-1)!=0|!git_repo) & # exclude git repos unless they are dirty or ahead of origin
+            depth==2 &                            # top-level items only
+            user == 'a' &                         # exclude items created by non-user processes
+            type %in% c('directory','file') &     # exclude special files
+            # below: exclusion regexps for file paths minus the targetdir prefix
+            !grepl('^Rtmp|^pid-|^[.]|^java_prop_extract|^[.]org[.]chromium|^[.]com[.]valvesoftware|^cura-crash|^Outlook Logging|^forge_installer|^kallichore-|^kernel-|^skype-|^steam[A-Za-z]{6}|[.]db[.]ses$|[.]log[.]last$|[.][0-9]+$|-[a-z0-9]{32}$|[{][A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12}[}]|^v8-compile-cache|ziptemp|^neoforge_installer|cache$|^cargo-install|^VSTelem|VSRemoteControl|^appInsights-nodeAIF-|^file[A-Za-z0-9]{6}$|^~lock|^acrobat_sbx',path_file) &
+            !path_ext %in% c('lock','apk','cpuprofile','log','tmp','pbix','xml','blend','xpi','so','ndjson','html','dat','toml','json','bak','gz','deb','AppImage','sql','R','ics','js','py','sqlplan','xlsx#','docx#','pptx#','csv#','dmp') & # exclude certain file extensions
+            !(grepl('[a-z0-9]{8}[.][a-z0-9]{3}',path_file) & as.numeric(totalsize) %in% c(21645,3221)) & # these two weird little VScode files appear over and over under random names
+            totalsize > 0 & filecount > 0
+          )
 # Which extensions matter the most?
 # subset(file_data,!is_gitrepo & depth==2 & size > fs_bytes('5Kb') & !grepl('^\\{[^{}]*\\}|^foo|foo[.][^.]*$|^~|#$|^tmp|tmp$|log$|pbix$|^[.]',path_file)) %>% summarise(count=n(),size=sum(size),.by = c(path_ext,type)) %>% arrange(desc(size)) %>% View()
+
+inclusion <- . %>% subset(!path_ext %in% c(
+  'csv','pdf','xlsx','docx','xls','pptx','ppt','doc','txt','rtf','md','sh'  # documents
+  ,'png','jpg','jpg','jpeg','gif','odg','gv','dot','svg'                    # images
+  ,'zip','tgz','jar','stl','mcworld'                                        # downloads
+  , 'accdb','cls','thmx','car'                                              # maybes
+  ))
+
+file_data %>% exclusion %>% inclusion %>% mutate(lasttouched=pmax(lastmod,lastcreate,lastaccess,lastchange)) %>% select(path,type,path_ext,filecount,totalsize,lasttouched) %>%
+  arrange(desc(totalsize)) %>% View
+file_data %>% exclusion %>% inclusion %>% group_by(path_ext,type) %>% summarise(filecount=sum(filecount),totalsize=sum(totalsize)) %>% arrange(desc(totalsize)) %>% View
 
 #
