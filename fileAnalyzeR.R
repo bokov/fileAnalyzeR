@@ -50,16 +50,11 @@ repo_info <- subset(file_data,path_file=='.git')$path_dir %>% unique %>%
 
 # update file_data so that every file that's in a git repo or in a subdirectory
 # of a git repo can be marked as such
-#file_data <- mutate(file_data, is_gitrepo = grepl(paste(repo_info$git_repo,collapse='|'),path_dir))
-
 file_data <- mutate(repo_info,git_repo = paste0("^", git_repo)) %>%
   regex_left_join(file_data,.,by = c("path_dir" = "git_repo")
                   ,ignore_case = FALSE) %>% mutate(git_repo=!is.na(git_repo));
 
-# Now, to get statistics about top-level folders
-# folderscmd <- "{   for dir in .[!.]* */; do     [ -d \"$dir\" ] || continue; name=$(basename \"$dir\"); files=$(find \"$dir\" -type f 2>/dev/null | wc -l 2>/dev/null); size=$(du -s \"$dir\" 2>/dev/null | awk '{print $1}'); echo \"$name\t$files\t$size\";   done; }  > folders_dirstats.csv 2>folders_errors.log"
-# system(paste('cd',shQuote(targetdir),'&&',folderscmd),wait = T);
-# dirstats <- import(file.path(targetdir,'folders_dirstats.csv'),col.names=c('path_dir','files','size'));
+# Now, to get statistics about all folders
 
 pb <- progress_bar$new(total=sum(file_data$type=='directory',na.rm=T),format='[:bar] :percent, :current of :total, :elapsedfull elapsed, ETA: :eta, :tick_rate/s')
 dir_fallbackresult <- data.frame(filecount=NA,totalsize=NA
@@ -80,13 +75,6 @@ dir_data <- dir_map(targetdir,recurse = T,all=T,type='directory',fail=F
                                            ,lastcreate=max(birth_time,na.rm=T))))
                    }
                  }) %>% bind_rows();
-
-
-## Waaay too slow
-# file_type <- dir_map(targetdir,recurse = T,all=T,type='any',fail=F
-#                      ,fun=function(xx){
-#                        type=system(paste('file',shQuote(xx),'2> /dev/null'),intern = T);
-#                        data.frame(path=xx,type=type)}) %>% bind_rows();
 
 file_data <- left_join(file_data,dir_data) %>%
   mutate(filecount=ifelse(type!='directory',1,filecount)
@@ -113,7 +101,6 @@ exclusion <- . %>%
             totalsize > 0 & filecount > 0
           )
 # Which extensions matter the most?
-# subset(file_data,!is_gitrepo & depth==2 & size > fs_bytes('5Kb') & !grepl('^\\{[^{}]*\\}|^foo|foo[.][^.]*$|^~|#$|^tmp|tmp$|log$|pbix$|^[.]',path_file)) %>% summarise(count=n(),size=sum(size),.by = c(path_ext,type)) %>% arrange(desc(size)) %>% View()
 
 inclusion <- . %>% subset(!path_ext %in% c(
   'csv','pdf','xlsx','docx','xls','pptx','ppt','doc','txt','rtf','md','sh'  # documents
